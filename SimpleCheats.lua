@@ -431,7 +431,7 @@ Tab:CreateToggle({
 	end,
 })
 
-Tab:CreateSection("Selecciona ítems para mostrar en ESP")
+Tab:CreateSection("Select items to track with ESP")
 
 -- Crear toggles visibles desde el inicio (Scroll ya abierto)
 for _, itemName in ipairs(availableItems) do
