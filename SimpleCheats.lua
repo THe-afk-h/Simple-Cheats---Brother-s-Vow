@@ -45,21 +45,11 @@ local items = {
 	["shellsammo"] = true,
 	["m1911"] = true,
 	["doublebarrel"] = true,
-	----
-	["Tec9"] = true,
-	["Revolver"] = true,
-	["Shiv"] = true,
-	["Bottle"] = true,
-	["Medkit"] = true,
-	["PrimaryAmmo"] = true,
-	["SecondaryAmmo"] = true,
-	["Beans"] = true,
-	["Candy Bar"] = true,
-	["CandyBar"] = true,
-	["ShellsAmmo"] = true,
-	["M1911"] = true,
-	["DoubleBarrel"] = true,
 	["BackPacks"] = true,
+    ["LongCrate"] = true,
+    ["Cooler"] = true,
+    ["Medkit"] = true,
+	["WoodCrate"] = true
 }
 
 -- =====================================================
@@ -187,7 +177,7 @@ local descendantAddedConnection
 local ESPEnabled = false
 local selectedItems = {}
 local ESPBillboards = {}
-local availableItems = { "tec9", "revolver", "shiv", "bottle", "medkit", "m1911", "shellsammo", "candy bar", "beans", "secondaryammo", "doublebarrel", "primaryammo" }
+local availableItems = { "tec9", "revolver", "shiv", "bottle", "medkit", "WoodCrate", "m1911", "shellsammo", "candy bar", "beans", "secondaryammo", "Cooler", "doublebarrel", "backpacks", "LongCrate",  "primaryammo" }
 
 local items = {}
 for _, name in ipairs(availableItems) do
@@ -675,16 +665,6 @@ local visualSettings = {
 	noLighting = false,
 }
 
-local lightingClearConnection
-
--- Función para eliminar todo en Lighting
-local function clearLighting()
-	for _, child in ipairs(Lighting:GetChildren()) do
-		child:Destroy()
-	end
-end
-
--- Variables para guardar conexiones y evitar fugas de memoria
 local terrainConnection
 local cameraConnection
 
@@ -695,64 +675,63 @@ Tab:CreateToggle({
 	Callback = function(state)
 		visualSettings.noRain = state
 
-		local function handleRainEffects(container)
-			for _, obj in ipairs(container:GetDescendants()) do
-				local name = obj.Name:lower()
-				if obj:IsA("ParticleEmitter") and obj.Parent and obj.Parent.Name:lower():find("rain") then
-					obj.Enabled = not state
-				elseif obj:IsA("BasePart") and name:find("rain") then
-					obj.Transparency = state and 1 or 0
-					obj.CanCollide = not state
+		-- Elimina efectos relacionados con la lluvia
+		local function removeRainObjects()
+			-- Elimina objetos específicos en Camera
+			local cameraRainObjects = { "RainStraight", "RainTopDown", "__RainEmitter" }
+			for _, name in ipairs(cameraRainObjects) do
+				local obj = Camera:FindFirstChild(name)
+				if obj then
+					obj:Destroy()
+				end
+			end
+
+			-- Elimina sonidos de truenos en Workspace
+			local thunderSounds = { "Thunder Rumble", "Thunder sound 2" }
+			for _, name in ipairs(thunderSounds) do
+				local obj = Workspace:FindFirstChild(name)
+				if obj then
+					obj:Destroy()
 				end
 			end
 		end
 
-		-- Aplica efectos de lluvia a workspace
-		handleRainEffects(workspace)
-
-		-- Limpia Terrain y establece conexión para eliminar objetos nuevos
-		if workspace:FindFirstChild("Terrain") then
-			if state then
-				-- Eliminar hijos existentes
-				for _, child in ipairs(workspace.Terrain:GetChildren()) do
+		-- Aplica la limpieza si el estado es verdadero
+		if state then
+			-- Elimina hijos actuales de Terrain
+			if Workspace:FindFirstChild("Terrain") then
+				for _, child in ipairs(Workspace.Terrain:GetChildren()) do
 					child:Destroy()
 				end
-				-- Conectar para eliminar hijos nuevos
-				terrainConnection = workspace.Terrain.ChildAdded:Connect(function(child)
+				terrainConnection = Workspace.Terrain.ChildAdded:Connect(function(child)
 					child:Destroy()
 				end)
-			else
-				-- Desconectar evento si existe
-				if terrainConnection then
-					terrainConnection:Disconnect()
-					terrainConnection = nil
-				end
 			end
-		end
 
-		-- Limpia CurrentCamera y establece conexión para eliminar objetos nuevos
-		if workspace:FindFirstChild("CurrentCamera") then
-			if state then
-				-- Eliminar hijos existentes
-				for _, child in ipairs(workspace.CurrentCamera:GetChildren()) do
-					child:Destroy()
-				end
-				-- Conectar para eliminar hijos nuevos
-				cameraConnection = workspace.CurrentCamera.ChildAdded:Connect(function(child)
-					child:Destroy()
-				end)
-			else
-				-- Desconectar evento si existe
-				if cameraConnection then
-					cameraConnection:Disconnect()
-					cameraConnection = nil
-				end
-				-- Restaurar efectos de lluvia en cámara
-				handleRainEffects(workspace.CurrentCamera)
+			-- Elimina objetos de lluvia en Camera
+			for _, child in ipairs(Camera:GetChildren()) do
+				child:Destroy()
+			end
+			cameraConnection = Camera.ChildAdded:Connect(function(child)
+				child:Destroy()
+			end)
+
+			-- Elimina objetos y sonidos de lluvia
+			removeRainObjects()
+		else
+			-- Si desactivado, desconecta conexiones
+			if terrainConnection then
+				terrainConnection:Disconnect()
+				terrainConnection = nil
+			end
+			if cameraConnection then
+				cameraConnection:Disconnect()
+				cameraConnection = nil
 			end
 		end
 	end,
 })
+
 
 Tab:CreateToggle({
 	Name = "Extended FOV (max)",
@@ -840,7 +819,7 @@ Tab:CreateToggle({
 	end,
 })
 
-local Tab = Window:CreateTab("Other", 6031275976) -- Cubo básico
+local Tab = Window:CreateTab("Misc", 6034509993) -- Cubo básico
 
 Tab:CreateButton({
 	Name = "🚪 Teleport to Exit",
