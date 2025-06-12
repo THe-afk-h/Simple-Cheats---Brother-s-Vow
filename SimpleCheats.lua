@@ -120,7 +120,7 @@ local function tagNPC(character, _, labelText) -- Ignorar el parámetro roleColo
 	highlight.FillColor = red
 	highlight.OutlineColor = red
 	highlight.FillTransparency = 1
-	highlight.OutlineTransparency = 0.7
+	highlight.OutlineTransparency = 0
 
 	addNameTag(character, labelText)
 	taggedCharacters[character] = true
@@ -180,8 +180,19 @@ end
 -- FUNCIONES DE ESP ITEMS OPTIMIZADO Y FUNCIONAL CON BILLBOARD
 -- =====================================================
 
+
 local taggedItems = {}
 local descendantAddedConnection
+
+local ESPEnabled = false
+local selectedItems = {}
+local ESPBillboards = {}
+local availableItems = { "tec9", "revolver", "shiv", "bottle", "medkit", "m1911", "shellsammo", "candy bar", "beans", "secondaryammo", "doublebarrel", "primaryammo" }
+
+local items = {}
+for _, name in ipairs(availableItems) do
+	items[string.lower(name)] = true
+end
 
 -- Revisa si el nombre está en la lista
 local function isTrackedItem(name)
@@ -323,34 +334,40 @@ local function recoverExistingBillboards()
 	end
 end
 
--- Activa o desactiva ESP de ítems con Billboard
+-- Función para activar/desactivar el ESP
 local function toggleItemsESP(state)
-	if state then
-		recoverExistingBillboards()
+	ESPEnabled = state
 
-		descendantAddedConnection = workspace.DescendantAdded:Connect(function(descendant)
-			if
-				(descendant:IsA("BasePart") or descendant:IsA("MeshPart") or descendant:IsA("Model"))
-				and isTrackedItem(descendant.Name)
-			then
-				highlightItem(descendant)
-				if debugItemsTag then
-					print("[ESP Items] Nuevo ítem detectado y resaltado:", descendant:GetFullName())
-				end
-			end
-		end)
-	else
-		for obj, _ in pairs(taggedItems) do
-			unhighlightItem(obj)
-		end
-		taggedItems = {}
-
-		if descendantAddedConnection then
-			descendantAddedConnection:Disconnect()
-			descendantAddedConnection = nil
+	for obj, data in pairs(taggedItems) do
+		local lowerName = string.lower(obj.Name)
+		if state and selectedItems[lowerName] then
+			data.billboard.Enabled = true
+		else
+			data.billboard.Enabled = false
 		end
 	end
 end
+
+local function loadAllItems()
+	for _, obj in ipairs(workspace:GetDescendants()) do
+		if isTrackedItem(obj.Name) and not taggedItems[obj] then
+			highlightItem(obj)
+			-- Por defecto no activados (los activas con toggle)
+			taggedItems[obj].billboard.Enabled = false
+		end
+	end
+end
+
+workspace.DescendantAdded:Connect(function(obj)
+	if isTrackedItem(obj.Name) then
+		-- Espera un poco para asegurarte que el objeto ya está listo
+		task.wait(0.1)
+		if not taggedItems[obj] then
+			highlightItem(obj)
+			taggedItems[obj].billboard.Enabled = ESPEnabled and selectedItems[string.lower(obj.Name)]
+		end
+	end
+end)
 
 -- =====================================================
 -- INTERFAZ CON RAYFIELD PARA ITEMS ESP CON BILLBOARD
@@ -390,7 +407,7 @@ Tab:CreateToggle({
 -- Slider para controlar distancia máxima de ESP (si quieres filtrar por distancia)
 Tab:CreateSlider({
 	Name = "Maximum ESP Distance",
-	Range = { 100, 800 },
+	Range = { 100, 2000 },
 	Increment = 100,
 	CurrentValue = espDistanceLimit,
 	Callback = function(val)
@@ -401,23 +418,43 @@ Tab:CreateSlider({
 	end,
 })
 
+
 -- Toggle para activar/desactivar ESP Items con Billboard
 Tab:CreateToggle({
 	Name = "ESP Items",
-	CurrentValue = itemsESPEnabled,
+	CurrentValue = false,
 	Callback = function(state)
-		itemsESPEnabled = state
+		if state and not next(taggedItems) then
+			loadAllItems()
+		end
 		toggleItemsESP(state)
-
-		Rayfield:Notify({
-			Title = "ESP Items",
-			Content = state and "Activado" or "Desactivado",
-			Duration = 3,
-			Image = 4483362458,
-		})
 	end,
 })
 
+Tab:CreateSection("Selecciona ítems para mostrar en ESP")
+
+-- Crear toggles visibles desde el inicio (Scroll ya abierto)
+for _, itemName in ipairs(availableItems) do
+	local lowerName = string.lower(itemName)
+	selectedItems[lowerName] = false -- valor inicial
+
+	Tab:CreateToggle({
+		Name = itemName,
+		CurrentValue = false,
+		Callback = function(state)
+			selectedItems[lowerName] = state
+	
+			if ESPEnabled then
+				-- Solo actualizar la visibilidad de los ítems con ese nombre
+				for obj, data in pairs(taggedItems) do
+					if string.lower(obj.Name) == lowerName then
+						data.billboard.Enabled = state
+					end
+				end
+			end
+		end,
+	})
+end	
 -- ===============================
 -- Interfaz con Player
 -- ===============================
@@ -436,10 +473,101 @@ local Humanoid = Character:WaitForChild("Humanoid")
 local noclip = false
 local speed = 16
 local jump = 50
+local fly = false
+local flying = false
+local flySpeed = 60
+local flyConnection = nil
+local bodyVelocity
+
+local Players = game:GetService("Players")
+local RunService = game:GetService("RunService")
+local UIS = game:GetService("UserInputService")
+local LocalPlayer = Players.LocalPlayer
+local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+local Humanoid = Character:WaitForChild("Humanoid")
+local HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
 
 -- Estado de Noclip
 local noclipActive = false
 local noclipConnection = nil
+
+-- 🎮 Fly
+local function startFlying()
+	flying = true
+	bodyVelocity = Instance.new("BodyVelocity")
+	bodyVelocity.Name = "FlyVelocity"
+	bodyVelocity.MaxForce = Vector3.new(1, 1, 1) * 1000000
+	bodyVelocity.Velocity = Vector3.zero
+	bodyVelocity.Parent = HumanoidRootPart
+
+	flyConnection = RunService.RenderStepped:Connect(function()
+		local direction = Vector3.zero
+		if UIS:IsKeyDown(Enum.KeyCode.W) then
+			direction += workspace.CurrentCamera.CFrame.LookVector
+		end
+		if UIS:IsKeyDown(Enum.KeyCode.S) then
+			direction -= workspace.CurrentCamera.CFrame.LookVector
+		end
+		if UIS:IsKeyDown(Enum.KeyCode.A) then
+			direction -= workspace.CurrentCamera.CFrame.RightVector
+		end
+		if UIS:IsKeyDown(Enum.KeyCode.D) then
+			direction += workspace.CurrentCamera.CFrame.RightVector
+		end
+		if UIS:IsKeyDown(Enum.KeyCode.Space) then
+			direction += Vector3.new(0, 1, 0)
+		end
+		if UIS:IsKeyDown(Enum.KeyCode.LeftControl) then
+			direction -= Vector3.new(0, 1, 0)
+		end
+
+		if direction.Magnitude > 0 then
+			bodyVelocity.Velocity = direction.Unit * flySpeed
+		else
+			bodyVelocity.Velocity = Vector3.zero
+		end
+	end)
+end
+
+local function stopFlying()
+	flying = false
+	if flyConnection then
+		flyConnection:Disconnect()
+		flyConnection = nil
+	end
+	if bodyVelocity then
+		bodyVelocity:Destroy()
+		bodyVelocity = nil
+	end
+end
+
+Tab:CreateToggle({
+	Name = "Fly",
+	CurrentValue = false,
+	Callback = function(state)
+		fly = state
+		Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
+		HumanoidRootPart = Character:WaitForChild("HumanoidRootPart")
+
+		if state then
+			startFlying()
+			Rayfield:Notify({
+				Title = "Fly Enabled",
+				Content = "Use WASD + Space + Ctrl to fly!",
+				Duration = 3,
+				Image = 4483362458,
+			})
+		else
+			stopFlying()
+			Rayfield:Notify({
+				Title = "Fly Disabled",
+				Content = "You are no longer flying.",
+				Duration = 3,
+				Image = 4483362458,
+			})
+		end
+	end,
+})
 
 -- Función para activar noclip
 local function activateNoclip()
@@ -540,60 +668,92 @@ local Camera = workspace.CurrentCamera
 local Workspace = game:GetService("Workspace")
 
 local visualSettings = {
-	noFog = false,
-	noEffects = false,
 	forceDay = false,
 	nightVision = false,
 	customFOV = false,
 	noRain = false,
+	noLighting = false,
 }
+
+local lightingClearConnection
+
+-- Función para eliminar todo en Lighting
+local function clearLighting()
+	for _, child in ipairs(Lighting:GetChildren()) do
+		child:Destroy()
+	end
+end
+
+-- Variables para guardar conexiones y evitar fugas de memoria
+local terrainConnection
+local cameraConnection
 
 -- 🌧️ Remove Rain
 Tab:CreateToggle({
 	Name = "Remove Rain",
-	CurrentValue = false,
+	CurrentValue = visualSettings.noRain,
 	Callback = function(state)
 		visualSettings.noRain = state
-		for _, obj in ipairs(workspace:GetDescendants()) do
-			-- Si es ParticleEmitter relacionado a lluvia, activa/desactiva Enabled
-			if obj:IsA("ParticleEmitter") and obj.Parent and obj.Parent.Name:lower():find("rain") then
-				obj.Enabled = not state
-			-- Si es BasePart llamado "rain" (u otro nombre con "rain") cambia transparencia y colisión
-			elseif obj:IsA("BasePart") and obj.Name:lower():find("rain") then
-				obj.Transparency = state and 1 or 0
-				obj.CanCollide = not state
+
+		local function handleRainEffects(container)
+			for _, obj in ipairs(container:GetDescendants()) do
+				local name = obj.Name:lower()
+				if obj:IsA("ParticleEmitter") and obj.Parent and obj.Parent.Name:lower():find("rain") then
+					obj.Enabled = not state
+				elseif obj:IsA("BasePart") and name:find("rain") then
+					obj.Transparency = state and 1 or 0
+					obj.CanCollide = not state
+				end
 			end
 		end
-		-- Adicional: Revisa también hijos dentro de la cámara para evitar error
-		local camera = workspace.CurrentCamera
-		for _, obj in ipairs(camera:GetDescendants()) do
-			if obj:IsA("ParticleEmitter") and obj.Parent and obj.Parent.Name:lower():find("rain") then
-				obj.Enabled = not state
-			elseif obj:IsA("BasePart") and obj.Name:lower():find("rain") then
-				obj.Transparency = state and 1 or 0
-				obj.CanCollide = not state
+
+		-- Aplica efectos de lluvia a workspace
+		handleRainEffects(workspace)
+
+		-- Limpia Terrain y establece conexión para eliminar objetos nuevos
+		if workspace:FindFirstChild("Terrain") then
+			if state then
+				-- Eliminar hijos existentes
+				for _, child in ipairs(workspace.Terrain:GetChildren()) do
+					child:Destroy()
+				end
+				-- Conectar para eliminar hijos nuevos
+				terrainConnection = workspace.Terrain.ChildAdded:Connect(function(child)
+					child:Destroy()
+				end)
+			else
+				-- Desconectar evento si existe
+				if terrainConnection then
+					terrainConnection:Disconnect()
+					terrainConnection = nil
+				end
+			end
+		end
+
+		-- Limpia CurrentCamera y establece conexión para eliminar objetos nuevos
+		if workspace:FindFirstChild("CurrentCamera") then
+			if state then
+				-- Eliminar hijos existentes
+				for _, child in ipairs(workspace.CurrentCamera:GetChildren()) do
+					child:Destroy()
+				end
+				-- Conectar para eliminar hijos nuevos
+				cameraConnection = workspace.CurrentCamera.ChildAdded:Connect(function(child)
+					child:Destroy()
+				end)
+			else
+				-- Desconectar evento si existe
+				if cameraConnection then
+					cameraConnection:Disconnect()
+					cameraConnection = nil
+				end
+				-- Restaurar efectos de lluvia en cámara
+				handleRainEffects(workspace.CurrentCamera)
 			end
 		end
 	end,
 })
 
--- 🌫️ Remove Fog
-Tab:CreateToggle({
-	Name = "Remove Fog",
-	CurrentValue = false,
-	Callback = function(state)
-		visualSettings.noFog = state
-		if state then
-			Lighting.FogEnd = 1e6
-			Lighting.FogStart = 1e6
-		else
-			Lighting.FogEnd = 1000
-			Lighting.FogStart = 0
-		end
-	end,
-})
-
--- 🔭 Extend max FOV
 Tab:CreateToggle({
 	Name = "Extended FOV (max)",
 	CurrentValue = false,
@@ -607,21 +767,29 @@ Tab:CreateToggle({
 	end,
 })
 
--- 💡 Remove visual effects (Blur, ColorCorrection, etc.)
+-- Nuevo toggle para eliminar todo en Lighting
 Tab:CreateToggle({
-	Name = "Remove Visual Effects (Blur, Color, etc.)",
+	Name = "Remove all effects",
 	CurrentValue = false,
 	Callback = function(state)
-		visualSettings.noEffects = state
-		for _, v in ipairs(Lighting:GetChildren()) do
-			if
-				v:IsA("BlurEffect")
-				or v:IsA("ColorCorrectionEffect")
-				or v:IsA("SunRaysEffect")
-				or v:IsA("BloomEffect")
-				or v:IsA("DepthOfFieldEffect")
-			then
-				v.Enabled = not state
+		visualSettings.noLighting = state
+
+		if state then
+			-- Eliminar todo lo que ya hay
+			clearLighting()
+			-- Conectar para eliminar lo que se agregue después
+			if not lightingClearConnection then
+				lightingClearConnection = Lighting.ChildAdded:Connect(function(child)
+					if visualSettings.noLighting then
+						child:Destroy()
+					end
+				end)
+			end
+		else
+			-- Desconectar para dejar de eliminar nuevos objetos
+			if lightingClearConnection then
+				lightingClearConnection:Disconnect()
+				lightingClearConnection = nil
 			end
 		end
 	end,
@@ -629,7 +797,7 @@ Tab:CreateToggle({
 
 -- ☀️ Force Daytime (Time = 14)
 Tab:CreateToggle({
-	Name = "Force Daytime (Time = 14)",
+	Name = "Force Daytime",
 	CurrentValue = false,
 	Callback = function(state)
 		visualSettings.forceDay = state
@@ -671,5 +839,21 @@ Tab:CreateToggle({
 		end
 	end,
 })
+
+local Tab = Window:CreateTab("Other", 6031275976) -- Cubo básico
+
+Tab:CreateButton({
+	Name = "🚪 Teleport to Exit",
+	Callback = function()
+		local player = game.Players.LocalPlayer
+		local character = player.Character or player.CharacterAdded:Wait()
+		local humanoidRootPart = character:WaitForChild("HumanoidRootPart")
+		local exitPart = workspace:WaitForChild("Map"):WaitForChild("ExitPart")
+
+		-- Teleport the player to the ExitPart
+		humanoidRootPart.CFrame = exitPart.CFrame + Vector3.new(0, 3, 0) -- un poco encima para evitar colisión
+	end,
+})
+
 
 Rayfield:Notify({ Title = "Simple cheats", Content = "loading cheats", Duration = 5, Image = 4483362458 })
